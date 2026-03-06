@@ -1,0 +1,312 @@
+# Gastrointestinal Endoscopy Image Classification
+### BTech Minor Project — Computer Vision
+
+---
+
+## Project Summary
+
+This project builds an automated image classification system for gastrointestinal (GI) endoscopy images using deep learning. The model classifies endoscopy images into 4 clinical categories using the HyperKvasir dataset and a ResNet18 neural network trained with PyTorch.
+
+| Metric                | Score      |
+|-----------------------|------------|
+| Macro F1-Score        | 0.8969     |
+| Balanced Accuracy     | 0.8999     |
+| **Competition Score** | **0.8984** |
+| Overall Accuracy      | 94%        |
+
+---
+
+## Dataset — HyperKvasir
+
+- **Source:** https://datasets.simula.no/hyper-kvasir/
+- **Download:** `hyper-kvasir-labeled-images.zip` (~4 GB)
+- **Total images:** 10,662
+- **Classes used:** 4 (normal, polyp, ulcer, inflammation)
+
+| Class        | Images | Description                                        |
+|--------------|--------|----------------------------------------------------|
+| normal       | 6,035  | Healthy GI tract tissue                            |
+| polyp        | 3,019  | Abnormal tissue growths, potentially pre-cancerous |
+| inflammation | 851    | Ulcerative colitis, IBD                            |
+| ulcer        | 757    | Esophagitis, Barrett's esophagus                   |
+
+> **Note:** HyperKvasir has 23 original classes which are mapped to the 4 project classes above. Classes like `tumor`, `erosion`, `stricture` etc. are not present in HyperKvasir and are excluded.
+
+---
+
+## Project Structure
+
+```
+BTECH_PROJECT_ON_CV_ENDOSCOPY/
+├── configs/
+│   └── baseline_config.yaml     # Training configuration
+├── data/                        # Prepared dataset (generated)
+│   ├── images/
+│   │   ├── normal/
+│   │   ├── polyp/
+│   │   ├── ulcer/
+│   │   └── inflammation/
+│   ├── metadata.csv
+│   └── splits/
+│       ├── train.csv            # 70% of data
+│       ├── val.csv              # 15% of data
+│       └── test.csv             # 15% of data
+├── labeled-images/              # Raw HyperKvasir dataset
+├── models/
+│   └── best_model.pth           # Saved trained model
+├── download_data.py             # Prepares HyperKvasir into project format
+├── create_splits.py             # Creates train/val/test splits
+├── train_model.py               # Model training script
+├── generate_predictions.py      # Run inference on test set
+├── evaluate.py                  # Evaluate predictions and print metrics
+└── validate_submission.py       # Validate prediction file format
+```
+
+---
+
+## Requirements
+
+### System Requirements
+- Python 3.11 (PyTorch does NOT support Python 3.12+)
+- NVIDIA GPU recommended (tested on RTX 3070)
+- ~10 GB disk space for dataset + model
+
+### Install Dependencies
+
+```bash
+# Install PyTorch with CUDA (GPU support — RTX 3070 / CUDA 11.8)
+py -3.11 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Install remaining dependencies
+py -3.11 -m pip install scikit-learn pandas numpy pillow tqdm pyyaml requests
+```
+
+> If you are on CPU only, remove the `--index-url` flag and install standard torch. Training will be significantly slower.
+
+---
+
+## How to Run — Step by Step
+
+### Step 1: Download the Dataset
+
+1. Go to: https://datasets.simula.no/hyper-kvasir/
+2. Download `hyper-kvasir-labeled-images.zip` (~4 GB)
+3. Extract it — you will get a folder called `labeled-images/`
+4. Move `labeled-images/` into your project root folder
+
+### Step 2: Prepare the Dataset
+
+```bash
+py -3.11 download_data.py --kvasir_dir ./labeled-images --output_dir ./data
+```
+
+What this does:
+- Walks all 23 class folders inside HyperKvasir
+- Maps them to the 4 project classes (normal, polyp, ulcer, inflammation)
+- Copies images into `./data/images/<class>/`
+- Generates `./data/metadata.csv` with image paths and labels
+
+Expected output:
+```
+Found 10662 images
+Dataset ready at: ./data
+Class distribution:
+  inflammation     851
+  normal          6035
+  polyp           3019
+  ulcer            757
+```
+
+### Step 3: Create Train / Val / Test Splits
+
+```bash
+py -3.11 create_splits.py --data_dir ./data
+```
+
+- Splits data into 70% train, 15% validation, 15% test
+- Uses stratified splitting to preserve class ratios in each split
+- Saves `train.csv`, `val.csv`, `test.csv` into `./data/splits/`
+
+Expected output:
+```
+Train: 7463 samples
+Val:   1599 samples
+Test:  1600 samples
+```
+
+### Step 4: Train the Model
+
+```bash
+py -3.11 train_model.py --config configs/baseline_config.yaml
+```
+
+What happens during training:
+- Loads ResNet18 pretrained on ImageNet
+- Replaces final layer with 4-class classifier
+- Uses **Focal Loss** to handle class imbalance (normal has 6035 images vs ulcer with 757)
+- Uses **WeightedRandomSampler** to give equal representation to all classes in each batch
+- Saves best model to `./models/best_model.pth` based on competition score
+- Training runs for 30 epochs (~15-20 minutes on RTX 3070)
+
+Config file (`configs/baseline_config.yaml`):
+```yaml
+data_dir: "./data"
+image_size: 224
+batch_size: 32
+learning_rate: 0.0005
+num_epochs: 30
+model_architecture: "resnet18"
+pretrained: true
+num_workers: 0
+```
+
+### Step 5: Generate Predictions
+
+```bash
+py -3.11 generate_predictions.py \
+    --model_path ./models/best_model.pth \
+    --test_csv ./data/splits/test.csv \
+    --data_root ./data \
+    --output predictions.json
+```
+
+- Loads the best saved model
+- Runs inference on all 1600 test images
+- Uses **Test-Time Augmentation (TTA)** — averages predictions across 5 augmented versions of each image for improved accuracy
+- Saves results to `predictions.json`
+
+### Step 6: Validate Submission Format
+
+```bash
+py -3.11 validate_submission.py --submission predictions.json
+```
+
+Checks that the prediction file is correctly formatted before evaluation.
+
+Expected output:
+```
+VALIDATION PASSED
+Total predictions: 1600
+Unique images: 1600
+```
+
+### Step 7: Evaluate Results
+
+```bash
+py -3.11 evaluate.py --test_csv ./data/splits/test.csv --predictions predictions.json
+```
+
+Prints full evaluation including per-class metrics and confusion matrix.
+
+---
+
+## Model Architecture
+
+| Component | Choice | Reason |
+|-----------|--------|--------|
+| Base model | ResNet18 | Lightweight, fast, strong baseline for medical imaging |
+| Pretrained weights | ImageNet | Transfer learning — works well even for medical images |
+| Final layer | Linear(512 → 4) | Replaced to match our 4 classes |
+| Loss function | Focal Loss (γ=2) | Handles class imbalance better than CrossEntropy |
+| Optimizer | AdamW (lr=0.0005) | Stable convergence with weight decay |
+| LR Scheduler | Cosine Annealing | Gradually reduces LR for better fine-tuning |
+| Sampler | WeightedRandomSampler | Balances class distribution in each training batch |
+
+### Data Augmentation (Training)
+- Random crop after resize
+- Random horizontal and vertical flip
+- Random rotation (±15°)
+- Color jitter (brightness, contrast, saturation)
+- ImageNet normalization
+
+### Test-Time Augmentation (Inference)
+Predictions are averaged over 5 versions of each image:
+1. Original
+2. Horizontal flip
+3. Vertical flip
+4. Center crop
+5. 90° rotation
+
+---
+
+## Results — Per Class
+
+| Class       | Precision | Recall | F1-Score | Support |
+|-------------|-----------|--------|----------|---------|
+| normal      | 0.96      | 0.94   | 0.95     | 906     |
+| polyp       | 0.95      | 1.00   | 0.97     | 453     |
+| ulcer       | 0.74      | 0.81   | 0.77     | 113     |
+| inflammation| 0.94      | 0.85   | 0.89     | 128     |
+
+The weakest class is `ulcer` (F1: 0.77) — this is expected as it has the fewest training images (757) and is visually similar to `inflammation`.
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| `ModuleNotFoundError: No module named 'torch'` | Run with `py -3.11` instead of `python` |
+| `Using device: cpu` despite having GPU | Reinstall PyTorch with CUDA: `py -3.11 -m pip install torch --index-url https://download.pytorch.org/whl/cu118` |
+| Out of memory during training | Set `batch_size: 16` in config |
+| `BrokenPipeError` on Windows | Set `num_workers: 0` in config (already default) |
+| PyTorch install fails | Make sure you are using Python 3.11, not 3.12+ |
+
+---
+
+## Future Improvements
+
+- **Better model:** Switch to EfficientNet-B3 or ConvNeXt for higher accuracy
+- **More data:** Source additional images for underrepresented classes
+- **Ensemble:** Combine predictions from multiple models
+- **Grad-CAM:** Add visual explainability to show which regions the model focuses on
+- **Web demo:** Deploy as a Flask/Streamlit app for live image upload and prediction
+
+
+
+prediction.json>>
+============================================================
+EVALUATION RESULTS
+============================================================
+
+Macro F1-Score:        0.8969
+Balanced Accuracy:     0.8999
+Macro Precision:       0.8964
+Macro Recall:          0.8999
+
+============================================================
+COMPETITION SCORE:     0.8984
+============================================================
+
+              precision    recall  f1-score   support
+
+      normal       0.96      0.94      0.95       906
+       polyp       0.95      1.00      0.97       453
+       ulcer       0.74      0.81      0.77       113
+    bleeding       0.00      0.00      0.00         0
+inflammation       0.94      0.85      0.89       128
+     erosion       0.00      0.00      0.00         0
+       tumor       0.00      0.00      0.00         0
+   stricture       0.00      0.00      0.00         0
+ diverticula       0.00      0.00      0.00         0
+foreign_body       0.00      0.00      0.00         0
+
+    accuracy                           0.94      1600
+   macro avg       0.36      0.36      0.36      1600
+weighted avg       0.94      0.94      0.94      1600
+
+
+Confusion Matrix:
+------------------------------------------------------------
+
+                 normal    polyp    ulcer bleeding inflamma  erosion    tumor strictur divertic foreign_
+normal              850      17      32       0       7       0       0       0       0       0
+polyp                 2     451       0       0       0       0       0       0       0       0
+ulcer                21       0      92       0       0       0       0       0       0       0
+bleeding              0       0       0       0       0       0       0       0       0       0
+inflammation         10       8       1       0     109       0       0       0       0       0
+erosion               0       0       0       0       0       0       0       0       0       0
+tumor                 0       0       0       0       0       0       0       0       0       0 
+stricture             0       0       0       0       0       0       0       0       0       0
+diverticula           0       0       0       0       0       0       0       0       0       0
+foreign_body          0       0       0       0       0       0       0       0       0       0

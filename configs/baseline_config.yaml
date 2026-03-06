@@ -1,8 +1,9 @@
-data_dir: "./processed_data"
+# baseline_config.yaml
+data_dir: "./data"          
 image_size: 224
-batch_size: 32
-learning_rate: 0.001
-num_epochs: 50
-model_architecture: "resnet18"
+batch_size: 32               
+learning_rate: 0.0005
+num_epochs: 30
+model_architecture: "resnet18"   
 pretrained: true
-num_workers: 4
+num_workers: 0               
